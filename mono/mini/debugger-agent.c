@@ -289,7 +289,7 @@ typedef struct {
 #define HEADER_LENGTH 11
 
 #define MAJOR_VERSION 2
-#define MINOR_VERSION 37
+#define MINOR_VERSION 38
 
 typedef enum {
 	CMD_SET_VM = 1,
@@ -514,7 +514,8 @@ typedef enum {
 typedef enum {
 	CMD_STACK_FRAME_GET_VALUES = 1,
 	CMD_STACK_FRAME_GET_THIS = 2,
-	CMD_STACK_FRAME_SET_VALUES = 3
+	CMD_STACK_FRAME_SET_VALUES = 3,
+	CMD_STACK_FRAME_GET_DOMAIN = 4,
 } CmdStackFrame;
 
 typedef enum {
@@ -814,6 +815,12 @@ static void invalidate_frames (DebuggerTlsData *tls);
 static void
 register_socket_transport (void);
 #endif
+
+static inline gboolean
+is_debugger_thread (void)
+{
+	return GetCurrentThreadId () == debugger_thread_id;
+}
 
 static int
 parse_address (char *address, char **host, int *port)
@@ -4070,6 +4077,10 @@ appdomain_start_unload (MonoProfiler *prof, MonoDomain *domain)
 {
 	DebuggerTlsData *tls;
 
+	/* This might be called during shutdown on the debugger thread from the CMD_VM_EXIT code */
+	if (is_debugger_thread ())
+		return;
+
 	/*
 	 * Remember the currently unloading appdomain as it is needed to generate
 	 * proper ids for unloading assemblies.
@@ -4083,6 +4094,9 @@ static void
 appdomain_unload (MonoProfiler *prof, MonoDomain *domain)
 {
 	DebuggerTlsData *tls;
+
+	if (is_debugger_thread ())
+		return;
 
 	tls = mono_native_tls_get_value (debugger_tls_id);
 	g_assert (tls);
@@ -4122,6 +4136,9 @@ assembly_load (MonoProfiler *prof, MonoAssembly *assembly, int result)
 static void
 assembly_unload (MonoProfiler *prof, MonoAssembly *assembly)
 {
+	if (is_debugger_thread ())
+		return;
+
 	process_profiler_event (EVENT_KIND_ASSEMBLY_UNLOAD, assembly);
 
 	clear_event_requests_for_assembly (assembly);
@@ -6489,6 +6506,10 @@ clear_types_for_assembly (MonoAssembly *assembly)
 {
 	MonoDomain *domain = mono_domain_get ();
 	AgentDomainInfo *info = NULL;
+
+	if (!domain || !domain_jit_info (domain))
+		/* Can happen during shutdown */
+		return;
 
 	mono_loader_lock ();
 	info = get_agent_domain_info (domain);
@@ -9037,6 +9058,11 @@ frame_commands (int command, guint8 *p, guint8 *end, Buffer *buf)
 		mono_metadata_free_mh (header);
 		break;
 	}
+	case CMD_STACK_FRAME_GET_DOMAIN: {
+		if (CHECK_PROTOCOL_VERSION (2, 38))
+			buffer_add_domainid (buf, frame->domain);
+		break;
+	}
 	default:
 		return ERR_NOT_IMPLEMENTED;
 	}
@@ -9405,7 +9431,8 @@ static const char* type_cmds_str[] = {
 static const char* stack_frame_cmds_str[] = {
 	"GET_VALUES",
 	"GET_THIS",
-	"SET_VALUES"
+	"SET_VALUES",
+	"GET_DOMAIN",
 };
 
 static const char* array_cmds_str[] = {

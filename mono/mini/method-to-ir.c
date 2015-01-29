@@ -190,14 +190,6 @@ const gint8 ins_sreg_counts[] = {
 	(vi)->idx = (id); \
 } while (0)
 
-void
-mono_inst_set_src_registers (MonoInst *ins, int *regs)
-{
-	ins->sreg1 = regs [0];
-	ins->sreg2 = regs [1];
-	ins->sreg3 = regs [2];
-}
-
 guint32
 mono_alloc_ireg (MonoCompile *cfg)
 {
@@ -3587,11 +3579,11 @@ static void
 save_cast_details (MonoCompile *cfg, MonoClass *klass, int obj_reg, gboolean null_check, MonoBasicBlock **out_bblock)
 {
 	if (mini_get_debug_options ()->better_cast_details) {
-		int to_klass_reg = alloc_preg (cfg);
 		int vtable_reg = alloc_preg (cfg);
 		int klass_reg = alloc_preg (cfg);
 		MonoBasicBlock *is_null_bb = NULL;
 		MonoInst *tls_get;
+		int to_klass_reg, context_used;
 
 		if (null_check) {
 			NEW_BBLOCK (cfg, is_null_bb);
@@ -3611,7 +3603,17 @@ save_cast_details (MonoCompile *cfg, MonoClass *klass, int obj_reg, gboolean nul
 		MONO_EMIT_NEW_LOAD_MEMBASE (cfg, klass_reg, vtable_reg, MONO_STRUCT_OFFSET (MonoVTable, klass));
 
 		MONO_EMIT_NEW_STORE_MEMBASE (cfg, OP_STORE_MEMBASE_REG, tls_get->dreg, MONO_STRUCT_OFFSET (MonoJitTlsData, class_cast_from), klass_reg);
-		MONO_EMIT_NEW_PCONST (cfg, to_klass_reg, klass);
+
+		context_used = mini_class_check_context_used (cfg, klass);
+		if (context_used) {
+			MonoInst *class_ins;
+
+			class_ins = emit_get_rgctx_klass (cfg, context_used, klass, MONO_RGCTX_INFO_KLASS);
+			to_klass_reg = class_ins->dreg;
+		} else {
+			to_klass_reg = alloc_preg (cfg);
+			MONO_EMIT_NEW_CLASSCONST (cfg, to_klass_reg, klass);
+		}
 		MONO_EMIT_NEW_STORE_MEMBASE (cfg, OP_STORE_MEMBASE_REG, tls_get->dreg, MONO_STRUCT_OFFSET (MonoJitTlsData, class_cast_to), to_klass_reg);
 
 		if (null_check) {
@@ -4103,6 +4105,7 @@ emit_castclass_with_cache (MonoCompile *cfg, MonoClass *klass, MonoInst **args, 
 	save_cast_details (cfg, klass, args [0]->dreg, TRUE, out_bblock);
 	res = mono_emit_method_call (cfg, mono_castclass, args, NULL);
 	reset_cast_details (cfg);
+	*out_bblock = cfg->cbb;
 
 	return res;
 }
@@ -4138,12 +4141,14 @@ emit_castclass_with_cache_nonshared (MonoCompile *cfg, MonoInst *obj, MonoClass 
  * Returns NULL and set the cfg exception on error.
  */
 static MonoInst*
-handle_castclass (MonoCompile *cfg, MonoClass *klass, MonoInst *src, int context_used)
+handle_castclass (MonoCompile *cfg, MonoClass *klass, MonoInst *src, int context_used, MonoBasicBlock **out_bb)
 {
 	MonoBasicBlock *is_null_bb;
 	int obj_reg = src->dreg;
 	int vtable_reg = alloc_preg (cfg);
 	MonoInst *klass_inst = NULL;
+
+	*out_bb = cfg->cbb;
 
 	if (context_used) {
 		MonoInst *args [3];
@@ -4162,7 +4167,7 @@ handle_castclass (MonoCompile *cfg, MonoClass *klass, MonoInst *src, int context
 			/* cache */
 			args [2] = cache_ins;
 
-			return emit_castclass_with_cache (cfg, klass, args, NULL);
+			return emit_castclass_with_cache (cfg, klass, args, out_bb);
 		}
 
 		klass_inst = emit_get_rgctx_klass (cfg, context_used, klass, MONO_RGCTX_INFO_KLASS);
@@ -4207,6 +4212,8 @@ handle_castclass (MonoCompile *cfg, MonoClass *klass, MonoInst *src, int context
 	MONO_START_BB (cfg, is_null_bb);
 
 	reset_cast_details (cfg);
+
+	*out_bb = cfg->cbb;
 
 	return src;
 }
@@ -9318,7 +9325,7 @@ mono_method_to_ir (MonoCompile *cfg, MonoMethod *method, MonoBasicBlock *start_b
 					ins->inst_p1 = (gpointer)(gssize)(sp [1]->inst_c0);
 					ins->sreg2 = -1;
 
-					sp [1]->opcode = OP_NOP;
+					NULLIFY_INS (sp [1]);
 				}
 			}
 
@@ -9379,7 +9386,7 @@ mono_method_to_ir (MonoCompile *cfg, MonoMethod *method, MonoBasicBlock *start_b
 
 					/* Might be followed by an instruction added by ADD_WIDEN_OP */
 					if (sp [1]->next == NULL)
-						sp [1]->opcode = OP_NOP;
+						NULLIFY_INS (sp [1]);
 				}
 			}
 			MONO_ADD_INS ((cfg)->cbb, (ins));
@@ -9871,7 +9878,7 @@ mono_method_to_ir (MonoCompile *cfg, MonoMethod *method, MonoBasicBlock *start_b
 				inline_costs += costs;
 			}
 			else {
-				ins = handle_castclass (cfg, klass, *sp, context_used);
+				ins = handle_castclass (cfg, klass, *sp, context_used, &bblock);
 				CHECK_CFG_EXCEPTION;
 				bblock = cfg->cbb;
 				*sp ++ = ins;
@@ -9985,7 +9992,7 @@ mono_method_to_ir (MonoCompile *cfg, MonoMethod *method, MonoBasicBlock *start_b
 					*sp++ = iargs [0];
 					inline_costs += costs;
 				} else {
-					ins = handle_castclass (cfg, klass, *sp, context_used);
+					ins = handle_castclass (cfg, klass, *sp, context_used, &bblock);
 					CHECK_CFG_EXCEPTION;
 					bblock = cfg->cbb;
 					*sp ++ = ins;
@@ -11787,9 +11794,9 @@ mono_method_to_ir (MonoCompile *cfg, MonoMethod *method, MonoBasicBlock *start_b
 					 * The backends expect the fceq opcodes to do the
 					 * comparison too.
 					 */
-					cmp->opcode = OP_NOP;
 					ins->sreg1 = cmp->sreg1;
 					ins->sreg2 = cmp->sreg2;
+					NULLIFY_INS (cmp);
 				}
 				MONO_ADD_INS (bblock, ins);
 				*sp++ = ins;

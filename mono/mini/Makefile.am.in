@@ -83,8 +83,6 @@ libmonoldflags=$(monoldflags) -version-info 1:0:0
 endif
 endif
 
-if JIT_SUPPORTED
-
 if SUPPORT_SGEN
 sgen_binaries = mono-sgen
 sgen_libraries = libmonosgen-2.0.la
@@ -166,8 +164,6 @@ libmono_llvm_la_LIBADD += $(top_builddir)/mono/mini/libmonoboehm-$(API_VER).la $
 endif
 endif
 
-endif
-
 mono_boehm_SOURCES = \
 	main.c
 
@@ -204,6 +200,7 @@ buildver-sgen.h: libmini-static.la $(monodir)/mono/metadata/libmonoruntimesgen-s
 endif
 	@echo "const char *build_date = \"`date`\";" > buildver-sgen.h
 mono_sgen-main-sgen.$(OBJEXT): buildver-sgen.h
+main-sgen.$(OBJEXT): buildver-sgen.h
 
 if DTRACE_G_REQUIRED
 LIBMONO_DTRACE_OBJECT = .libs/mono-dtrace.$(OBJEXT)
@@ -344,6 +341,7 @@ sparc_sources = \
 s390x_sources = \
 	mini-s390x.c		\
 	mini-s390x.h		\
+	support-s390x.h		\
 	exceptions-s390x.c	\
 	tramp-s390x.c
 
@@ -726,19 +724,7 @@ clean-local:
 
 pkgconfigdir = $(libdir)/pkgconfig
 
-if SUPPORT_SGEN
-sgen_built_sources = buildver-sgen.h
-endif
-
-if SUPPORT_BOEHM
-boehm_built_sources = buildver-boehm.h
-endif
-
-if JIT_SUPPORTED
-BUILT_SOURCES = version.h $(arch_built) $(sgen_built_sources) $(boehm_built_sources)
-else
-BUILT_SOURCES = version.h $(sgen_built_sources) $(boehm_built_sources)
-endif
+BUILT_SOURCES = version.h $(arch_built)
 
 CLEANFILES= $(BUILT_SOURCES) *.exe *.dll
 EXTRA_DIST = TestDriver.cs ldscript ldscript.mono \
