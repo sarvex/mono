@@ -287,6 +287,12 @@ ves_icall_System_Security_Cryptography_RNGCryptoServiceProvider_RngGetBytes (gpo
 		get_entropy_from_server (socket_path, mono_array_addr (arry, guchar, 0), mono_array_length (arry));
 		return (gpointer) -1;
 	} else {
+		if (file == 0) {
+			g_warning("Trying to read entropy from stdin! Looks like RNGCryptoServiceProvider is already finalized.");
+			/* exception will be thrown in managed code */
+			return NULL;
+		}
+
 		/* Read until the buffer is filled. This may block if using NAME_DEV_RANDOM. */
 		gint count = 0;
 		gint err;
