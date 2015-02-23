@@ -31,7 +31,7 @@ namespace System.Windows {
 	[TypeConverter (typeof (ExpressionConverter))]
 	public class Expression
 	{
-		internal Expression ()
+		public Expression ()
 		{
 		}
 	}
