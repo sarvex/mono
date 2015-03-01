@@ -253,6 +253,9 @@ namespace System.Xaml
 
 		void OnAssemblyLoaded (object o, AssemblyLoadEventArgs e)
 		{
+			// Do nothing, actual scanning triggers assertion in mono runtime at the time of writing
+			return;
+
 			if (reference_assemblies != null)
 				return; // do nothing
 
