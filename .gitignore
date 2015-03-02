@@ -122,3 +122,10 @@ mono.spec
 mono-core.spec
 tmpinst-dir.stamp
 
+### Local development ignore
+.idea
+*.iml
+CMakeCache.txt
+CMakeLists.txt
+CMakeFiles/
+cmake_install.cmake
